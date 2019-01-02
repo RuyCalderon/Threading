@@ -12,8 +12,8 @@ The next steps are as follows:
        - Currently there is no guarantee that a task will ever be executed for long-running programs
     - Add some concurrent data structures for use in user-defined functions (optional)
       - Concurrent Queue, 
-     - FIFO
-     - LIFO
+      - FIFO
+      - LIFO
       - Concurrent Hash Table
     - Concurrent Linked List
       - Fine-grained (for FIFO task queue)
