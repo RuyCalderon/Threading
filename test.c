@@ -3,9 +3,11 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <string.h>
+
 #define PTHREAD_TEST_MEM_DEBUG
 #include "overseer.h"
-#include "test_functions.c"
+#include "unit_tests.c"
 
 #define Ki(N) (1024 * (N))
 #define Mi(N) (1024 * Ki(N))
@@ -47,11 +49,11 @@ void threads_test(thread_pool *threads)
 		sum_array[i] = 1;
 	}
 	printf("location of threads: %p\n",threads);
-	int task_ids[20];
+	int task_ids[30];
 	printf("task ids are located at: %p\n", task_ids);
-	for(i = 0; i < 10; ++i)
+	for(i = 0; i < 20; ++i)
 	{
-		int chunk_size = count/20;
+		int chunk_size = count/30;
 		array_arg *work = MALLOC(array_arg);
 		work->array = sum_array+i*chunk_size;
 		work->arr_size = chunk_size;
@@ -64,16 +66,16 @@ void threads_test(thread_pool *threads)
 			task_ids[i] = insert_task_with_callback(threads, parallel_min, work, (callback_function)print_min, (callback_in)&task_ids[i]);
 		}
 	}
-	printf("inserted %d tasks\n", 10);
+	printf("inserted %d tasks\n", 20);
 	
 	printf("print sum at %p\n", (void *)print_sum);
 	printf("print min at %p\n", (void *)print_min);
 	
 	enable_workers(threads);
 	
-	for(i = 10; i < 20; ++i)
+	for(i = 20; i < 30; ++i)
 	{
-		int chunk_size = count/20;
+		int chunk_size = count/30;
 		array_arg *work = MALLOC(array_arg);
 		work->array = sum_array+i*chunk_size;
 		work->arr_size = chunk_size;

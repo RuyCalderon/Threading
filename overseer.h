@@ -58,6 +58,9 @@
 	}
 
 #endif
+#ifndef TASK_POOL_INITIAL_SIZE
+	#define TASK_POOL_INITIAL_SIZE 10
+#endif
 #ifndef CAS
 	#define CAS(ptr, old_val, new_val) __sync_bool_compare_and_swap(ptr, old_val, new_val)
 #endif
@@ -192,6 +195,26 @@ typedef struct concurrent_queue
 	pthread_spinlock_t lock;
 }concurrent_queue;
 
+int queue_grow(concurrent_queue *queue)
+{
+	int double_size = queue->max * 2;
+	void **double_array = MALLOC_MULTIPLE(void *,double_size);
+
+	if(double_array != NULL)
+	{
+		void *old_array = queue->array;
+
+		memcpy(double_array, old_array, sizeof(void *) * queue->count);
+		queue->max = double_size;
+		queue->array = double_array;
+
+		FREE(old_array);
+	}
+	printf("grow\n");
+
+	return !!double_array;
+}
+
 int queue_full(concurrent_queue *queue)
 {
 	if(queue == NULL)
@@ -232,7 +255,11 @@ int queue_push(concurrent_queue *queue, void *data)
 	else
 	{
 		pthread_spin_lock(&queue->lock);
-		if(!queue_full(queue))
+		//Cool little bit of unintended first order logic here:  
+		//	if P[full] then Q [grow] -> !P [full] || Q [grow] and then the
+		//	brackets is the world in which the statement is sound
+		//may be obvious but I've never thought of it that way before...
+		if(!queue_full(queue) || queue_grow(queue)) 
 		{
 			queue->array[queue->count++] = data;
 			success = 1;
@@ -262,7 +289,7 @@ void *queue_pop(concurrent_queue *queue)
 concurrent_queue *create_concurrent_queue(int count)
 {
 	concurrent_queue *queue = MALLOC(concurrent_queue);
-	queue->max = count * 2;
+	queue->max = count;
 	queue->count = 0;
 	queue->array = MALLOC_MULTIPLE(void *,queue->max);
 	pthread_spin_init(&queue->lock, PTHREAD_PROCESS_PRIVATE);
@@ -670,12 +697,10 @@ typedef struct thread_pool
 	int main_thread_id;
 }thread_pool;
 
-#define TASK_POOL_SIZE 10
-
 thread_pool *create_thread_pool(int size)
 {
 	thread_pool *pool = MALLOC(thread_pool);
-	pool->tasks = create_task_board(TASK_POOL_SIZE);
+	pool->tasks = create_task_board(TASK_POOL_INITIAL_SIZE);
 	pool->workers = create_worker_pool(size);
 	pthread_barrier_init(&pool->global_barrier, NULL, size+1);
 	pthread_spin_init(&pool->lock, PTHREAD_PROCESS_PRIVATE);
@@ -687,44 +712,49 @@ thread_pool *create_thread_pool(int size)
 		worker *next_worker = init_worker(increment_counter(&pool->workers->id_generator), &pool->global_barrier, pool->tasks);
 		push_worker(pool->workers, next_worker);
 	}
-	printf("task board located at: %p\n", pool->tasks);
-	printf("worker pool located at: %p\n", pool->workers);
 	return pool;
 }
 
-void disable_workers(thread_pool *pool)
+int disable_workers(thread_pool *pool)
 {
-	printf("begin disable workers\n");
+	if(pool == NULL)
+	{
+		return 0;
+	}
 	pthread_spin_lock(&pool->lock);
 	int worker_index,count = worker_count(pool->workers);
 	for(worker_index = 0; worker_index < count; ++worker_index)
-{
+	{
 		worker_set_status(get_worker_by_position(pool->workers, worker_index), WS_SLEEP);
 	}
 	pthread_spin_unlock(&pool->lock);
-	printf("workers disabled\n");
+	return 1;
 }
 
-void enable_workers(thread_pool *pool)
+int enable_workers(thread_pool *pool)
 {
-	printf("begin enable workers\n");
+	if(pool == NULL)
+	{
+		return 0;
+	}
 	pthread_spin_lock(&pool->lock);
 	int worker_index,count = worker_count(pool->workers);
-	printf("worker count: %d\n", count);
 	for(worker_index = 0; worker_index < count; ++worker_index)
-{
+	{
 		worker_set_status(get_worker_by_position(pool->workers, worker_index), WS_AWAIT);
 	}
 	pthread_spin_unlock(&pool->lock);
-	printf("workers enabled\n");
+	return 1;
 }
 
 int insert_task(thread_pool *pool, task_function func, task_argument arg)
 {
+	if(pool == NULL)
+	{
+		return -1;
+	}
 	pthread_spin_lock(&pool->lock);
 	task *new_task = create_task(func, arg);
-	printf("location of threads: %p\n",pool);
-	printf("location of tasks: %p\n", pool->tasks);
 	int task_id = push_available(pool->tasks, new_task);
 	pthread_spin_unlock(&pool->lock);
 
@@ -744,18 +774,26 @@ callback create_callback(callback_function func, callback_in arg)
 
 int insert_task_with_callback(thread_pool *pool, task_function func, task_argument arg, callback_function callback_func, callback_in callback_arg)
 {
+	if(pool == NULL)
+	{
+		return -1;
+	}
 	pthread_spin_lock(&pool->lock);
 	task *new_task = create_task(func, arg);
 	set_callback(new_task, create_callback(callback_func, callback_arg));
 	printf("location of threads: %p\n",pool);
 	printf("location of tasks: %p\n", pool->tasks);
 	int task_id = push_available(pool->tasks, new_task);
-	pthread_spin_unlock(&pool->lock);	
+	pthread_spin_unlock(&pool->lock);
+	return task_id;
 }
 
-
-void await_tasks_complete(thread_pool *pool)
+int await_tasks_complete(thread_pool *pool)
 {
+	if(pool == NULL)
+	{
+		return 0;
+	}
 	pthread_spin_lock(&pool->lock);
 	int worker_index,count = worker_count(pool->workers);
 	while(task_count(pool->tasks) > 0)
@@ -769,10 +807,15 @@ void await_tasks_complete(thread_pool *pool)
 	printf("thread pool waiting at barrier at location: %p\n", &pool->global_barrier);
 	pthread_barrier_wait(&pool->global_barrier);
 	pthread_spin_unlock(&pool->lock);
+	return 1;
 }
 
-void retire_thread_pool(thread_pool *pool)
+int retire_thread_pool(thread_pool *pool)
 {
+	if(pool == NULL)
+	{
+		return 0;
+	}
 	pthread_spin_lock(&pool->lock);
 	int worker_index,count = worker_count(pool->workers);
 	for(worker_index = 0; worker_index < count; ++worker_index)
@@ -798,5 +841,5 @@ void retire_thread_pool(thread_pool *pool)
 	#ifdef PTHREAD_TEST_MEM_DEBUG
 		tracked_mem_report();
 	#endif
-	printf("all done\n");
+	return 1;
 }
